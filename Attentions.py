@@ -3,6 +3,11 @@
 # Time: 2021-7-6
 # Reference: https://github.com/bojone/attention/blob/master/attention_keras.py
 
+# Various attention mechanism using Pytorch
+# Author: Jermy
+# Time: 2021-7-6
+# Reference: https://github.com/bojone/attention/blob/master/attention_keras.py
+
 import math
 import copy
 import numpy as np
@@ -43,18 +48,20 @@ def to_mask(x: Tensor, mask: BoolTensor = None):
         raise ValueError("""Mask tensor does not match X tensor. See 
         https://pytorch.org/docs/stable/generated/torch.Tensor.masked_fill_.html#torch.Tensor.masked_fill_ in detail""")
 
-def attention(query: Tensor, key: Tensor, value: Tensor, mask: BoolTensor = None):
-    # query.shape: (batch_size, len_q, dim_q)
-    # key.shape: (batch_size, len_k, dim_q)
-    # value.shape: (batch_size, len_k, dim_v)
-    scale = math.sqrt(query.size(-1))
-    scores = torch.matmul(query, key.transpose(-2, -1)) / scale# (batch_size, len_q, len_k)
-    if mask is not None:
-        scores = to_mask(scores, mask=mask)
-    scores_p = F.softmax(scores, dim=-1)
-    attentioned_context = torch.matmul(scores_p, value)
-    return attentioned_context
-
+class Attention(nn.Module):
+    def __init__(self):
+        super(Attention, self).__init__()
+    def forward(self, query: Tensor, key: Tensor, value: Tensor, mask: BoolTensor = None):
+        # query.shape: (batch_size, len_q, dim_q)
+        # key.shape: (batch_size, len_k, dim_q)
+        # value.shape: (batch_size, len_k, dim_v)
+        scale = math.sqrt(query.size(-1))
+        scores = torch.matmul(query, key.transpose(-2, -1)) / scale# (batch_size, len_q, len_k)
+        if mask is not None:
+            scores = to_mask(scores, mask=mask)
+        scores_p = F.softmax(scores, dim=-1)
+        attentioned_context = torch.matmul(scores_p, value)
+        return attentioned_context
 
 #多头注意力机制
 class MultiHeadedAttention(nn.Module):
@@ -68,7 +75,7 @@ class MultiHeadedAttention(nn.Module):
         self.fc_key = nn.Linear(d_model, d_model)
         self.fc_value = nn.Linear(d_model, d_model)
         self.fc_final = nn.Linear(d_model, d_model)#heads * dim_head --> d_model
-        self.attn = None
+        self.attn = Attention()
         self.dropout = nn.Dropout(p=dropout)
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -82,7 +89,7 @@ class MultiHeadedAttention(nn.Module):
         key = key.view(batch_size, -1, self.heads, self.dim_head).transpose(1, 2)
         value = value.view(batch_size, -1, self.heads, self.dim_head).transpose(1, 2)
         # Apply attention on all the projected vectors in batch
-        atted_x = attention(query, key, value, mask=mask)
+        atted_x = self.attn(query, key, value, mask=mask)
         atted_x = atted_x.transpose(1, 2).contiguous().view(batch_size, -1, self.heads * self.dim_head)#after transpose, shape is (batch_size, seq_len, heads, dim_head)
         atted_x = self.fc_final(atted_x)#feature mapping and concatting
         atted_x = self.dropout(atted_x)
@@ -106,7 +113,7 @@ class AtrousMultiHeadedAttention(nn.Module):
         self.fc_key = nn.Linear(d_model, d_model)
         self.fc_value = nn.Linear(d_model, d_model)
         self.fc_final = nn.Linear(d_model, d_model)#heads * dim_head --> d_model
-        self.attn = None
+        self.attn = Attention()
         self.dropout = nn.Dropout(p=dropout)
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -136,7 +143,7 @@ class AtrousMultiHeadedAttention(nn.Module):
         key = key.view(batch_size * self.dilation, -1, self.heads, self.dim_head).transpose(1, 2)
         value = value.view(batch_size * self.dilation, -1, self.heads, self.dim_head).transpose(1, 2)
         # Apply attention
-        atted_x = attention(query, key, value, mask=mask)
+        atted_x = self.attn(query, key, value, mask=mask)
         #after transpose, shape is (batch_size * self.dilation, padded_seq_len // self.dilation, heads, dim_head)
         atted_x = atted_x.transpose(1, 2).contiguous()
         atted_x = atted_x.view(batch_size * self.dilation, -1, self.heads * self.dim_head)#(batch_size * self.dilation, padded_seq_len // self.dilation, embed_dim)
@@ -193,7 +200,7 @@ class LocalMultiHeadedAttention(nn.Module):
         self.fc_key = nn.Linear(d_model, d_model)
         self.fc_value = nn.Linear(d_model, d_model)
         self.fc_final = nn.Linear(d_model, d_model)#heads * dim_head --> d_model
-        self.attn = None
+        self.attn = Attention()
         self.dropout = nn.Dropout(p=dropout)
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -215,7 +222,7 @@ class LocalMultiHeadedAttention(nn.Module):
         key = key.view(key.size(0), -1, self.heads, self.dim_head).transpose(1, 2)#its shape: (batch_size * seq_len, heads, kernel_size, dim_head)
         value = value.view(value.size(0), -1, self.heads, self.dim_head).transpose(1, 2)
         # Apply attention
-        atted_x = attention(query, key, value, mask=mask)#its shape: (batch_size * seq_len, heads, 1, dim_head)
+        atted_x = self.attn(query, key, value, mask=mask)#its shape: (batch_size * seq_len, heads, 1, dim_head)
         atted_x = atted_x.transpose(1, 2).contiguous()#its shape: (batch_size * seq_len, 1, heads, dim_head)
         atted_x = atted_x.view(-1, 1, self.heads * self.dim_head)
         atted_x = atted_x.view(batch_size, seq_len, -1)#its shape: (batch_size, seq_len, embed_dim)
@@ -334,6 +341,45 @@ class Transformer_Encoder(nn.Module):
 
 
 if __name__=="__main__":
+    # # Testing for to_mask method
+    # x = torch.randn(2, 5, 6)
+    # mask = torch.BoolTensor([
+    #     [[1],[1],[0],[0],[0]],
+    #     [[0],[0],[1],[1],[1]]
+    # ])
+    # print(x)
+    # print(x.size())
+    # print(mask)
+    # print(mask.size())
+    # print(to_mask(x, mask))
+
+    # # Testing for self_attention method
+    # query = torch.randn(2, 6, 10)
+    # key = torch.randn(2, 8, 10)
+    # value = torch.randn(2, 8, 20)
+    # # 6个query,8个key,6 * 8矩阵表示每个query对每个key的匹配得分
+    # # mask则表示屏蔽这个query对每个key的匹配得分，即不考虑这个query
+    # mask = torch.BoolTensor([
+    #     [[1], [1], [1], [0], [0], [0]],
+    #     [[0], [0], [0], [1], [1], [1]]
+    # ])
+    # print(mask.size())
+    # attention = self_attention(query, key, value, mask=mask)
+    # print(attention.size())
+
+    # Testing for MultiHeadedAttention
+    # x = torch.randn(2, 16, 256)
+    # d_model, heads = 256, 8
+    # mul_head_att = MultiHeadedAttention(d_model=d_model, heads=heads)
+    # fx = mul_head_att(x)
+    # print(fx.size())
+
+    # Testing for Position_wise_Feed_Forward
+    # x = torch.randn(2, 8, 32)
+    # m = Position_wise_Feed_Forward(32, 100)
+    # o = m(x)
+    # print(o.size())
+    
     # Testing Transformer-encoder
     Configuration.heads = 10
     Configuration.chosen_attention = "LocalMultiHeadedAttention"
@@ -346,4 +392,26 @@ if __name__=="__main__":
     out = m(x)
     print(out)
 
+    # Testing fot extract_seq_patches method and attention mechanism
+    # x = torch.randn(2, 10, 6)
+    # xx = x.view(2, 10, 1, 6)
+    # print(xx)
+    # xx = xx.view(-1, 1, 6)
+    # print(xx)
+    # print(xx.size())
+    # kernel_size = 5
+    # dilation = 2
+    # x = extract_seq_patches(x, kernel_size, dilation=dilation)
+    # x = x.view(-1, kernel_size, 6)
+    # print(x)
+    # print(x.size())
+    # print("Yep")
+    # att = attention(query=xx, key=x, value=x)
+    # print(att)
+    # print(att.size())
+    # att = att.view(2, -1, 1, 6)
+    # print(att)
+    # print(att.size())
 
+
+    print("Yep")
